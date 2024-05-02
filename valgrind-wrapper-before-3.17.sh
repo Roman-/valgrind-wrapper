@@ -1,14 +1,15 @@
 #!/bin/bash
 
 # valgrind_wrapper.sh runs valgrind on a binary, and also:
-# 1) Adds a bunch of handy options (see below)
-# 2) Kills (sends SIGINT) the executable if it's running too long
-# 3) Checks for file descriptor leaks, exiting (non-zero) error code if they've been found
-# This wrapper exits with code 1 if valgrind has detected some problems in the code, or 2 if internal error occurred
-
+# 1. Adds a bunch of handy options (see below)
+# 2. Kills (sends SIGINT) the executable if it's running too long
+# 3. Checks for file descriptor leaks, exiting with (non-zero) error code if they've been found
+# 4. Checks for the binary itself exited with non-zero code (handy for launching tests and checking them in the meantime)
+# The exit codes of this wrapper are as follows:
 EXIT_CODE_SUCCESS=0
 EXIT_CODE_PROBLEMS_FOUND=1
 EXIT_CODE_INTERNAL_ERROR=2
+EXIT_CODE_BINARY_RETURNED_NONZERO=3
 
 # Usage: fail "message" [error_code]
 function fail {
@@ -27,7 +28,7 @@ stderr_file='/tmp/valgrind_stderr.log'
 # Run valgrind with a timeout
 timeout --preserve-status --signal=SIGINT $SECONDS \
     valgrind --leak-check=full   \
-         --error-exitcode=1      \
+         --error-exitcode=241    \
          --show-leak-kinds=all   \
          --track-origins=yes     \
          --track-fds=yes         \
@@ -35,10 +36,14 @@ timeout --preserve-status --signal=SIGINT $SECONDS \
          --log-file=$stderr_file \
          $BINARY
 
-# Check if valgrind has detected any memory problems
-if [[ $? -ne 0 ]]; then
+# Check if valgrind has detected anything bad
+exit_code=$?
+if [[ $exit_code -eq 241 ]]; then
   cat $stderr_file >/dev/stderr
   exit $EXIT_CODE_PROBLEMS_FOUND
+elif [[ $exit_code -ne 0 ]]; then
+  echo "$BINARY exited with non-zero code $exit_code" >/dev/stderr
+  exit $EXIT_CODE_BINARY_RETURNED_NONZERO
 fi
 
 # Check FD leaks: because we redirect valgrind to file, this adds one extra open FD at exit to the existing 3 std FDs:
